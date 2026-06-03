@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Your Study Plan — StudyAI{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <!-- Page Header -->
+  <div class="page-header fade-up">
+    <h1>Your <span class="gradient-text">Study Plan</span> is Ready!</h1>
+    <p>AI has analyzed your inputs and created an optimized schedule just for you.</p>
+  </div>
+
+  <!-- Result Layout -->
+  <div class="result-layout">
+
+    <!-- ====== INTENSITY HERO CARD ====== -->
+    <div class="card result-hero fade-up">
+      <div class="intensity-display">
+
+        <!-- Intensity Orb -->
+        <div class="intensity-orb orb-{{ result.intensity|lower }}">
+          {{ config.emoji }}
+        </div>
+
+        <!-- Intensity Label -->
+        <div class="intensity-label" style="color: {{ config.color }}">
+          {{ result.intensity }} Study
+        </div>
+
+        <!-- Description -->
+        <p class="intensity-desc">{{ config.description }}</p>
+
+        <!-- AI Confidence -->
+        <div class="confidence-chip">
+          <i class="fa-solid fa-microchip"></i>
+          AI Confidence: {{ result.confidence }}
+        </div>
+
+        <!-- Input Summary -->
+        <div class="inputs-summary">
+          <div class="input-chip">
+            <span>😊</span>
+            Mood: <strong>{{ result.mood }}</strong>
+          </div>
+          <div class="input-chip">
+            <i class="fa-solid fa-clock" style="color:var(--indigo)"></i>
+            Hours: <strong>{{ result.hours }}</strong>
+          </div>
+          <div class="input-chip">
+            <i class="fa-solid fa-brain" style="color:var(--violet)"></i>
+            Focus: <strong>{{ result.focus }}/10</strong>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ====== STUDY TIMELINE ====== -->
+    <div class="card fade-up delay-1">
+      <div class="form-card-title">
+        <div class="title-icon icon-indigo">
+          <i class="fa-solid fa-timeline" style="color:var(--indigo); font-size:13px;"></i>
+        </div>
+        Your Study Schedule
+      </div>
+
+      <div class="timeline">
+        {% for block in result.study_plan %}
+        <div class="timeline-item {{ block.type }}-block">
+          <div class="timeline-icon">{{ block.icon }}</div>
+          <div class="timeline-info">
+            <div class="timeline-session">{{ block.session }}</div>
+            <div class="timeline-time">{{ block.time }}</div>
+          </div>
+          <div class="timeline-duration">{{ block.duration }}</div>
+        </div>
+        {% empty %}
+        <p style="color: var(--text-muted); text-align: center; padding: 20px;">
+          No schedule generated. Please try again.
+        </p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- ====== PERSONALIZED TIPS ====== -->
+    <div class="card fade-up delay-2">
+      <div class="form-card-title">
+        <div class="title-icon icon-violet">
+          <i class="fa-solid fa-lightbulb" style="color:var(--violet); font-size:13px;"></i>
+        </div>
+        Personalized Study Tips
+      </div>
+
+      <ul class="tips-list">
+        {% for tip in result.tips %}
+        <li class="tip-item">{{ tip }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <!-- ====== ACTIONS CARD ====== -->
+    <div class="card fade-up delay-3">
+      <div class="form-card-title">
+        <div class="title-icon icon-emerald">
+          <i class="fa-solid fa-download" style="color:var(--emerald); font-size:13px;"></i>
+        </div>
+        Save & Share
+      </div>
+
+      <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 20px;">
+        Download your study plan or print it for offline use.
+      </p>
+
+      <div class="download-actions">
+
+        <!-- Download CSV -->
+        <a href="{% url 'download_csv' %}" class="btn btn-success">
+          <i class="fa-solid fa-file-csv"></i>
+          Download CSV
+        </a>
+
+        <!-- Print / PDF -->
+        <button class="btn btn-secondary" id="print-pdf">
+          <i class="fa-solid fa-print"></i>
+          Print / PDF
+        </button>
+
+        <!-- Generate New Plan -->
+        <a href="{% url 'home' %}" class="btn btn-secondary">
+          <i class="fa-solid fa-rotate-right"></i>
+          New Plan
+        </a>
+
+      </div>
+
+      <div class="form-divider mt-6"></div>
+
+      <!-- View History -->
+      <div class="mt-4">
+        <a href="{% url 'history' %}" class="btn btn-secondary btn-full">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          View All Past Plans
+        </a>
+      </div>
+
+    </div>
+
+  </div><!-- /result-layout -->
+</div>
+
+<!-- Print Styles -->
+<style>
+  @media print {
+    .navbar, .footer, .download-actions, #print-pdf { display: none !important; }
+    .card { border: 1px solid #ccc !important; background: #fff !important; color: #000 !important; }
+    .gradient-text { color: #4f46e5 !important; -webkit-text-fill-color: #4f46e5 !important; }
+    body { background: #fff !important; color: #000 !important; }
+    .text-secondary, .intensity-desc, .timeline-time, .timeline-duration { color: #555 !important; }
+    .result-layout { grid-template-columns: 1fr !important; }
+    .result-hero { grid-column: 1 !important; }
+  }
+</style>
+
+{% endblock %}
