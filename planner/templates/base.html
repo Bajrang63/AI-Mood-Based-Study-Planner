@@ -1,59 +1,20 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}StudyAI Planner{% endblock %}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-  <link rel="stylesheet" href="{% static 'css/style.css' %}" />
-</head>
-<body>
-  <header class="navbar">
-    <div class="container nav-inner">
-      <a href="{% url 'home' %}" class="brand">StudyAI</a>
-      <nav class="nav-links">
-        <a href="{% url 'home' %}" class="nav-item">Home</a>
-        <a href="{% url 'history' %}" class="nav-item">History</a>
-        <a href="{% url 'result' %}" class="nav-item">Last Result</a>
-        {% if request.user.is_authenticated %}
-        <a href="{% url 'logout' %}" class="nav-item btn-ghost">Logout</a>
-        {% else %}
-        <a href="{% url 'login' %}" class="nav-item btn-primary">Login</a>
-        {% endif %}
-      </nav>
-    </div>
-  </header>
-
-  {% if messages %}
-  <div class="messages-container">
-    <div class="container">
-      {% for message in messages %}
-      <div class="alert alert-{{ message.tags|default:'info' }}">
-        {{ message|safe }}
-        <button class="alert-close">✕</button>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
-  <main class="page-content">
-    {% block content %}{% endblock %}
-  </main>
-
-  <footer class="footer">
-    <div class="container">
-      <span>© {% now "Y" %} StudyAI Planner</span>
-      <span>Built with Django + scikit-learn</span>
-    </div>
-  </footer>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="{% static 'js/script.js' %}"></script>
-</body>
-</html>
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#2563eb"><title>{% block title %}Studyspace · Your learning, in balance{% endblock %}</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('study-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(e){}</script>
+<link rel="stylesheet" href="{% static 'css/style.css' %}"></head>
+<body><a class="skip-link" href="#main">Skip to content</a>
+{% if request.user.is_authenticated %}<aside class="sidebar" id="sidebar">
+<a class="brand" href="{% url 'home' %}"><span class="brand-mark">s<span>✦</span></span>studyspace<span class="brand-dot">.</span></a>
+<div class="workspace"><span class="workspace-icon">{{ request.user.username|first|upper }}</span><div>Personal workspace<small>Your space to grow</small></div><span class="workspace-check">✓</span></div>
+<p class="nav-label">WORKSPACE</p><nav aria-label="Main navigation">
+<a href="{% url 'home' %}" class="nav-item {% if page == 'home' %}active{% endif %}"><span>▦</span> Overview <b>↗</b></a>
+<a href="{% url 'tasks' %}" class="nav-item {% if page == 'tasks' %}active{% endif %}"><span>☑</span> Subjects & tasks</a>
+<a href="{% url 'history' %}" class="nav-item {% if page == 'history' %}active{% endif %}"><span>▤</span> My study plans</a>
+<a href="{% url 'result' %}" class="nav-item {% if page == 'result' %}active{% endif %}"><span>◷</span> Focus session</a></nav>
+<div class="sidebar-note"><span>✧</span><h3>A little progress, every day.</h3><p>Make room for learning. And for yourself.</p><a href="{% url 'home' %}#create-plan">Find your rhythm →</a></div>
+<div class="sidebar-user"><span class="avatar">{{ request.user.username|first|upper }}</span><div>{{ request.user.username }}<small>Personal account</small></div><form action="{% url 'logout' %}" method="post">{% csrf_token %}<button class="icon-button" aria-label="Sign out" title="Sign out">↪</button></form></div>
+</aside>{% endif %}
+<div class="shell {% if not request.user.is_authenticated %}auth-shell{% endif %}"><header class="topbar"><div class="topbar-left">{% if request.user.is_authenticated %}<button class="icon-button menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="sidebar">☰</button><span>My workspace <span class="separator">/</span> <strong>{% if page == 'tasks' %}Subjects & tasks{% elif page == 'history' %}My study plans{% elif page == 'result' %}Focus session{% else %}Overview{% endif %}</strong></span>{% else %}<a class="brand" href="{% url 'home' %}">studyspace<span class="brand-dot">.</span></a>{% endif %}</div><div class="topbar-actions"><span class="today">{% now 'D, d M' %}</span><button id="themeToggle" class="theme-toggle" aria-label="Switch color theme"><span id="themeIcon">◐</span><span id="themeLabel">Theme</span></button>{% if request.user.is_authenticated %}<span class="avatar blue">{{ request.user.username|first|upper }}</span>{% endif %}</div></header>
+<main id="main" tabindex="-1">{% if messages %}{% for message in messages %}<div class="alert" role="status">{{ message }}</div>{% endfor %}{% endif %}{% block content %}{% endblock %}</main>
+<footer><span><strong>studyspace.</strong> Learn at your own pace.</span><span>Small steps. Meaningful progress.</span></footer></div>
+<script src="{% static 'js/script.js' %}" defer></script></body></html>

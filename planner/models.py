@@ -8,6 +8,7 @@ MODELS:
 """
 
 from django.db import models
+from django.core.validators import RegexValidator, MinValueValidator, MaxValueValidator
 from django.contrib.auth.models import User
 
 
@@ -107,3 +108,50 @@ class StudyHistory(models.Model):
             'Intense': 'badge-intense-intensity',
         }
         return colors.get(self.intensity, '')
+
+
+
+class Subject(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    name = models.CharField(max_length=80)
+    color = models.CharField(max_length=7, default='#2563eb', validators=[RegexValidator(r'^#[0-9a-fA-F]{6}$')])
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user','name'],name='unique_user_subject')]
+    def __str__(self): return self.name
+
+class Task(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject,on_delete=models.CASCADE,related_name='tasks')
+    title = models.CharField(max_length=160)
+    due_date = models.DateField(null=True,blank=True)
+    estimated_minutes = models.PositiveIntegerField(default=60, validators=[MinValueValidator(5), MaxValueValidator(1440)])
+    difficulty = models.PositiveSmallIntegerField(choices=[(1,'Easy'),(2,'Medium'),(3,'Hard')],default=2)
+    priority = models.PositiveSmallIntegerField(choices=[(1,'Low'),(2,'Normal'),(3,'High')],default=2)
+    completed = models.BooleanField(default=False)
+    def __str__(self): return self.title
+
+class StudyPlan(models.Model):
+    user = models.ForeignKey(User,on_delete=models.CASCADE,related_name='plans')
+    title = models.CharField(max_length=120)
+    mood = models.CharField(max_length=20,choices=StudyHistory.MOOD_CHOICES)
+    focus = models.PositiveSmallIntegerField()
+    minutes = models.PositiveIntegerField()
+    intensity = models.CharField(max_length=20,choices=StudyHistory.INTENSITY_CHOICES)
+    explanation = models.TextField()
+    archived = models.BooleanField(default=False)
+    starts_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['-created_at']
+
+class StudyBlock(models.Model):
+    plan = models.ForeignKey(StudyPlan,on_delete=models.CASCADE,related_name='blocks')
+    task = models.ForeignKey(Task,on_delete=models.SET_NULL,null=True,blank=True)
+    title = models.CharField(max_length=180)
+    kind = models.CharField(max_length=10,choices=[('study','Study'),('break','Break')])
+    position = models.PositiveIntegerField()
+    minutes = models.PositiveIntegerField()
+    starts_at = models.DateTimeField()
+    completed = models.BooleanField(default=False)
+    class Meta:
+        ordering=['position']
+        constraints=[models.UniqueConstraint(fields=['plan','position'],name='unique_plan_position')]

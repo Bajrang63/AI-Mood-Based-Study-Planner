@@ -1,350 +1,172 @@
-"""
-views.py — View Functions (Controllers)
-========================================
-Each function here handles one URL/page of the web app.
-
-VIEWS:
-  1. home_view       → Main form page (index.html)
-  2. predict_view    → Handles form submission + AI prediction
-  3. result_view     → Shows the study plan result
-  4. history_view    → Shows user's past study plans
-  5. download_csv    → Downloads plan as CSV
-  6. login_view      → Login page
-  7. register_view   → Register page
-  8. logout_view     → Logs user out
-
-FLOW:
-  User fills form → predict_view → saves to DB → redirects to result_view
-"""
-
 import csv
-import json
-from datetime import datetime, timedelta
-from django.shortcuts import render, redirect
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.models import User
-from django.contrib.auth.decorators import login_required
+from datetime import timedelta
 from django.contrib import messages
+from django.contrib.auth import login, logout
+from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
+from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.models import User
+from django.db import transaction, IntegrityError
+from django.db.models import Sum
 from django.http import HttpResponse, JsonResponse
-from django.db.models import Count
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
+from django.views.decorators.http import require_POST
+from .forms import RegisterForm, PlanForm, SubjectForm, TaskForm
+from .models import StudyPlan, StudyBlock, Subject, Task, StudyHistory
+from .services import build_plan
 
-from .models import StudyHistory
-from .ml_model import predict_intensity
-import django, os
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'study_planner.settings')
-django.setup()
-
-
-# -------------------------------------------------------
-# 1. HOME VIEW — Main Form Page
-# -------------------------------------------------------
-@login_required  # User must be logged in to access
-def home_view(request):
-    """
-    Renders the main form page where users enter:
-    - Mood, Available Hours, Focus Level
-    
-    Also shows the last 5 study sessions for quick reference.
-    """
-    # Get last 5 history items for the sidebar
-    recent_history = StudyHistory.objects.filter(
-        user=request.user
-    ).order_by('-date')[:5]
-    
-    context = {
-        'user': request.user,
-        'recent_history': recent_history,
-        'page': 'home',
-    }
-    return render(request, 'index.html', context)
-
-
-# -------------------------------------------------------
-# 2. PREDICT VIEW — Processes Form + Runs AI Model
-# -------------------------------------------------------
 @login_required
+def home_view(request):
+    blocks=StudyBlock.objects.filter(plan__user=request.user,kind='study').exclude(plan__archived=True,completed=False)
+    planned=blocks.aggregate(n=Sum('minutes'))['n'] or 0
+    completed=blocks.filter(completed=True).aggregate(n=Sum('minutes'))['n'] or 0
+    plans=StudyPlan.objects.filter(user=request.user)
+    week=timezone.now()-timedelta(days=7)
+    initial={'start':timezone.localtime().replace(second=0,microsecond=0),'mood':'Happy','intensity':'auto'}
+    return render(request,'index.html',{'page':'home','form':PlanForm(initial=initial),'plans':plans[:3],'tasks':Task.objects.filter(user=request.user,completed=False).select_related('subject').order_by('due_date','-priority')[:5],'plan_count':plans.count(),'completed_minutes':completed,'completion':round(completed/planned*100) if planned else 0,'week_minutes':blocks.filter(completed=True,starts_at__gte=week).aggregate(n=Sum('minutes'))['n'] or 0,'open_tasks':Task.objects.filter(user=request.user,completed=False).count()})
+
+@login_required
+@require_POST
 def predict_view(request):
-    """
-    Handles the POST form submission from index.html.
-    
-    Steps:
-      1. Extract form data (mood, hours, focus)
-      2. Validate input
-      3. Call AI model to predict intensity
-      4. Save result to database (StudyHistory)
-      5. Store result in session
-      6. Redirect to result page
-    """
-    if request.method != 'POST':
-        return redirect('home')
-    
-    # Step 1: Extract form data
-    mood = request.POST.get('mood', 'Happy')
-    try:
-        hours = int(request.POST.get('hours', 4))
-        focus = int(request.POST.get('focus', 5))
-    except (ValueError, TypeError):
-        messages.error(request, "Invalid input. Please enter valid numbers.")
-        return redirect('home')
-    
-    # Step 2: Validate ranges
-    hours = max(1, min(8, hours))    # Clamp to 1–8
-    focus = max(1, min(10, focus))   # Clamp to 1–10
-    
-    valid_moods = ['Happy', 'Sad', 'Stressed', 'Energetic', 'Tired']
-    if mood not in valid_moods:
-        mood = 'Happy'
-    
-    # Step 3: Run AI prediction
-    result = predict_intensity(mood, hours, focus)
-    
-    # Step 4: Save to database
-    history_record = StudyHistory.objects.create(
-        user=request.user,
-        mood=mood,
-        hours=hours,
-        focus=focus,
-        intensity=result['intensity'],
-    )
-    
-    # Step 5: Store result in session (to pass to result page)
-    request.session['last_result'] = {
-        'intensity': result['intensity'],
-        'confidence': result['confidence'],
-        'mood': mood,
-        'hours': hours,
-        'focus': focus,
-        'study_plan': result['study_plan'],
-        'tips': result['tips'],
-        'history_id': history_record.id,
-    }
-    
-    # Step 6: Redirect to result page
-    return redirect('result')
+    form=PlanForm(request.POST)
+    if form.is_valid():
+        with transaction.atomic():
+            # Serialize planning for this account to avoid duplicate task allocation.
+            User.objects.select_for_update().get(pk=request.user.pk)
+            plan=build_plan(request.user,form.cleaned_data)
+        return redirect('plan_detail',pk=plan.pk)
+    return render(request,'plan_form.html',{'form':form,'page':'home'},status=400)
 
-
-# -------------------------------------------------------
-# 3. RESULT VIEW — Displays AI-Generated Study Plan
-# -------------------------------------------------------
 @login_required
 def result_view(request):
-    """
-    Displays the generated study plan to the user.
-    Reads result from session (set in predict_view).
-    """
-    result = request.session.get('last_result')
-    
-    if not result:
-        messages.info(request, "Please generate a study plan first.")
+    plan=StudyPlan.objects.filter(user=request.user).first()
+    if not plan:
+        messages.info(request,'Create your first plan to get started.')
         return redirect('home')
-    
-    # Add intensity-specific styling info
-    intensity_config = {
-        'Light': {
-            'color': '#4ade80',
-            'emoji': '🌿',
-            'description': 'A gentle, relaxed study session. Perfect for review and light reading.',
-            'badge_class': 'intensity-light',
-        },
-        'Moderate': {
-            'color': '#f59e0b',
-            'emoji': '⚡',
-            'description': 'A balanced, focused session. Good for learning new concepts.',
-            'badge_class': 'intensity-moderate',
-        },
-        'Intense': {
-            'color': '#f43f5e',
-            'emoji': '🔥',
-            'description': 'A deep, challenging session. Best for complex problem-solving.',
-            'badge_class': 'intensity-intense',
-        },
-    }
-    
-    config = intensity_config.get(result['intensity'], intensity_config['Moderate'])
-    
-    context = {
-        'result': result,
-        'config': config,
-        'page': 'result',
-    }
-    return render(request, 'result.html', context)
+    return redirect('plan_detail',pk=plan.pk)
 
+@login_required
+def plan_detail(request,pk):
+    plan=get_object_or_404(StudyPlan,user=request.user,pk=pk)
+    blocks=list(plan.blocks.select_related('task'))
+    study=sum(b.minutes for b in blocks if b.kind=='study')
+    done=sum(b.minutes for b in blocks if b.kind=='study' and b.completed)
+    return render(request,'result.html',{'plan':plan,'blocks':blocks,'study_minutes':study,'break_minutes':plan.minutes-study,'completion':round(done/study*100) if study else 0,'page':'result'})
 
-# -------------------------------------------------------
-# 4. HISTORY VIEW — Shows Past Study Plans
-# -------------------------------------------------------
+@login_required
+@require_POST
+def toggle_block(request,pk):
+    with transaction.atomic():
+        block=get_object_or_404(StudyBlock.objects.select_for_update(),plan__user=request.user,plan__archived=False,pk=pk)
+        block.completed=not block.completed
+        block.save(update_fields=['completed'])
+    return redirect('plan_detail',pk=block.plan_id)
+
+@login_required
+def tasks_view(request):
+    subject_form=SubjectForm(); task_form=TaskForm(user=request.user)
+    if request.method=='POST':
+        if request.POST.get('action')=='subject':
+            subject_form=SubjectForm(request.POST)
+            if subject_form.is_valid():
+                if Subject.objects.filter(user=request.user,name=subject_form.cleaned_data['name']).exists(): subject_form.add_error('name','This subject already exists.')
+                else:
+                    subject=subject_form.save(commit=False);subject.user=request.user;subject.save()
+                    return redirect('tasks')
+        else:
+            task_form=TaskForm(request.POST,user=request.user)
+            if task_form.is_valid():
+                task=task_form.save(commit=False);task.user=request.user;task.save()
+                return redirect('tasks')
+    return render(request,'tasks.html',{'page':'tasks','subject_form':subject_form,'task_form':task_form,'subjects':Subject.objects.filter(user=request.user),'tasks':Task.objects.filter(user=request.user).select_related('subject').order_by('completed','due_date','-priority')})
+
+@login_required
+@require_POST
+def toggle_task(request,pk):
+    task=get_object_or_404(Task,user=request.user,pk=pk)
+    task.completed=not task.completed;task.save(update_fields=['completed'])
+    return redirect('tasks')
+
 @login_required
 def history_view(request):
-    """
-    Shows all of the user's past study plan sessions.
-    """
-    # All history for this user
-    all_history = StudyHistory.objects.filter(user=request.user)
-    
-    # Mood distribution for chart (count of each mood)
-    mood_counts = (
-        all_history.values('mood')
-        .annotate(count=Count('mood'))
-        .order_by('mood')
-    )
+    from django.core.paginator import Paginator
+    plans=StudyPlan.objects.filter(user=request.user).prefetch_related('blocks')
+    return render(request,'history.html',{'page':'history','plans':Paginator(plans,12).get_page(request.GET.get('page')),'legacy':StudyHistory.objects.filter(user=request.user)[:20]})
 
-    # Intensity distribution
-    intensity_counts = (
-        all_history.values('intensity')
-        .annotate(count=Count('intensity'))
-        .order_by('intensity')
-    )
-
-    # Time series data for focus trend chart
-    focus_dates = [h.date.strftime('%b %d') for h in all_history.order_by('date')]
-    focus_values = [h.focus for h in all_history.order_by('date')]
-    
-    chart_labels = [item['mood'] for item in mood_counts]
-    chart_data = [item['count'] for item in mood_counts]
-    
-    context = {
-        'history': all_history,
-        'chart_labels': json.dumps(chart_labels),
-        'chart_data': json.dumps(chart_data),
-        'focus_dates': json.dumps(focus_dates),
-        'focus_values': json.dumps(focus_values),
-        'intensity_counts': intensity_counts,
-        'total_sessions': all_history.count(),
-        'page': 'history',
-    }
-    return render(request, 'history.html', context)
-
-
-# -------------------------------------------------------
-# 5. DOWNLOAD CSV VIEW — Exports Study Plan as CSV
-# -------------------------------------------------------
 @login_required
-def download_csv(request):
-    """
-    Downloads the user's study history as a CSV file.
-    Can also download just the last plan if history_id is provided.
-    """
-    # Create HTTP response with CSV content type
-    response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = 'attachment; filename="study_plan.csv"'
-    
-    writer = csv.writer(response)
-    
-    # CSV Header row
-    writer.writerow(['Date', 'Mood', 'Hours', 'Focus Level', 'Study Intensity'])
-    
-    # Get user's history
-    history = StudyHistory.objects.filter(user=request.user)
-    
-    # Write each row
-    for record in history:
-        writer.writerow([
-            record.date.strftime('%Y-%m-%d %H:%M'),
-            record.mood,
-            record.hours,
-            record.focus,
-            record.intensity,
-        ])
-    
+def download_csv(request,pk=None):
+    response=HttpResponse(content_type='text/csv');response['Content-Disposition']='attachment; filename="study-plan.csv"'
+    writer=csv.writer(response)
+    if pk is not None:
+        plan=get_object_or_404(StudyPlan,user=request.user,pk=pk)
+        writer.writerow(['Plan','Start','Type','Task','Minutes','Completed'])
+        # Prefix free text so spreadsheet software cannot interpret it as a formula.
+        safe=lambda x: "'"+x if x.lstrip().startswith(('=','+','-','@')) else x
+        for b in plan.blocks.all():writer.writerow([safe(plan.title),timezone.localtime(b.starts_at).isoformat(),b.kind,safe(b.title),b.minutes,b.completed])
+    else:
+        writer.writerow(['Date','Title','Mood','Minutes','Focus','Intensity'])
+        for p in StudyPlan.objects.filter(user=request.user):writer.writerow([p.starts_at.isoformat(),"'"+p.title,p.mood,p.minutes,p.focus,p.intensity])
     return response
 
-
-# -------------------------------------------------------
-# 6. LOGIN VIEW
-# -------------------------------------------------------
 def login_view(request):
-    """
-    Handles both GET (show login form) and POST (process login).
-    """
-    # If user is already logged in, redirect to home
-    if request.user.is_authenticated:
-        return redirect('home')
-    
-    if request.method == 'POST':
-        username = request.POST.get('username', '').strip()
-        password = request.POST.get('password', '')
-        
-        # Authenticate user
-        user = authenticate(request, username=username, password=password)
-        
-        if user is not None:
-            login(request, user)
-            messages.success(request, f"Welcome back, {user.username}! 🎉")
-            return redirect('home')
-        else:
-            messages.error(request, "Invalid username or password. Please try again.")
-    
-    return render(request, 'login.html', {'page': 'login'})
+    if request.user.is_authenticated:return redirect('home')
+    form=AuthenticationForm(request,data=request.POST or None)
+    import hashlib
+    key='login-attempt:'+hashlib.sha256((request.META.get('REMOTE_ADDR','')+'|'+request.POST.get('username','').casefold()).encode()).hexdigest()
+    attempts=cache.get(key,0)
+    if request.method=='POST':
+        if attempts>=10:
+            form.add_error(None,'Too many sign-in attempts. Please try again in 10 minutes.')
+            return render(request,'login.html',{'form':form,'page':'login'},status=429)
+        if form.is_valid():
+            cache.delete(key);login(request,form.get_user());return redirect('home')
+        cache.set(key,attempts+1,600)
+    return render(request,'login.html',{'form':form,'page':'login'})
 
-
-# -------------------------------------------------------
-# 7. REGISTER VIEW
-# -------------------------------------------------------
 def register_view(request):
-    """
-    Handles user registration.
-    Creates a new User object and logs them in automatically.
-    """
-    if request.user.is_authenticated:
-        return redirect('home')
-    
-    if request.method == 'POST':
-        username = request.POST.get('username', '').strip()
-        email = request.POST.get('email', '').strip()
-        password1 = request.POST.get('password1', '')
-        password2 = request.POST.get('password2', '')
-        
-        # Validation
-        if not username or not password1:
-            messages.error(request, "Username and password are required.")
-        elif password1 != password2:
-            messages.error(request, "Passwords do not match.")
-        elif len(password1) < 6:
-            messages.error(request, "Password must be at least 6 characters.")
-        elif User.objects.filter(username=username).exists():
-            messages.error(request, "Username already taken. Choose another.")
-        else:
-            # Create the user
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=password1,
-            )
-            # Auto-login after registration
-            login(request, user)
-            messages.success(request, f"Account created! Welcome, {username}! 🎉")
-            return redirect('home')
-    
-    return render(request, 'login.html', {'page': 'register'})
+    if request.user.is_authenticated:return redirect('home')
+    form=RegisterForm(request.POST or None)
+    if request.method=='POST' and form.is_valid():
+        try:
+            with transaction.atomic():user=form.save()
+        except IntegrityError:form.add_error('username','This username is already taken.')
+        else:login(request,user);return redirect('home')
+    return render(request,'login.html',{'form':form,'page':'register'})
 
-
-# -------------------------------------------------------
-# 8. LOGOUT VIEW
-# -------------------------------------------------------
+@require_POST
 def logout_view(request):
-    """Logs the user out and redirects to login page."""
-    logout(request)
-    messages.info(request, "You've been logged out. See you soon! 👋")
-    return redirect('login')
+    logout(request);return redirect('login')
 
-
-# -------------------------------------------------------
-# 9. CHART DATA API — Returns JSON for mood chart
-# -------------------------------------------------------
 @login_required
 def chart_data_api(request):
-    """
-    API endpoint that returns mood history as JSON for Chart.js.
-    Called by JavaScript on the history page.
-    """
-    history = StudyHistory.objects.filter(user=request.user).order_by('date')
-    
-    data = {
-        'dates': [h.date.strftime('%b %d') for h in history],
-        'moods': [h.mood for h in history],
-        'intensities': [h.intensity for h in history],
-        'focus': [h.focus for h in history],
-        'hours': [h.hours for h in history],
-    }
-    
-    return JsonResponse(data)
+    plans=StudyPlan.objects.filter(user=request.user).order_by('-created_at')[:30]
+    return JsonResponse({'plans':[{'date':p.starts_at.isoformat(),'mood':p.mood,'focus':p.focus,'minutes':p.minutes} for p in plans]})
+
+
+@login_required
+def edit_task(request,pk):
+    task=get_object_or_404(Task,user=request.user,pk=pk)
+    form=TaskForm(request.POST or None,instance=task,user=request.user)
+    if request.method=='POST' and form.is_valid():
+        form.save()
+        messages.success(request,'Task updated. Existing plans keep their original schedule; new plans use your updated task.')
+        return redirect('tasks')
+    return render(request,'edit_task.html',{'form':form,'page':'tasks'})
+
+
+@login_required
+@require_POST
+def reschedule_plan(request,pk):
+    with transaction.atomic():
+        User.objects.select_for_update().get(pk=request.user.pk)
+        old=get_object_or_404(StudyPlan.objects.select_for_update(),user=request.user,pk=pk,archived=False)
+        done=sum(old.blocks.filter(completed=True).values_list('minutes',flat=True))
+        remaining=old.minutes-done
+        if remaining<15:
+            messages.info(request,'Less than 15 minutes remain. Create a new plan for a fresh session.')
+            return redirect('plan_detail',pk=old.pk)
+        old.archived=True;old.save(update_fields=['archived'])
+        new=build_plan(request.user,{'title':old.title+' · continued' if len(old.title)<108 else old.title,'mood':old.mood,'focus':old.focus,'minutes':remaining,'start':timezone.now().replace(second=0,microsecond=0),'intensity':old.intensity})
+    messages.success(request,'Unfinished time replanned from now. Your previous plan and completed blocks are preserved.')
+    return redirect('plan_detail',pk=new.pk)

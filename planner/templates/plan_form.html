@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<div class="page-heading"><div><span class="eyebrow">ONE QUICK ADJUSTMENT</span><h1>Let's refine your plan.</h1><p>Please check the highlighted fields.</p></div></div><section class="card narrow"><form class="form-stack" method="post" action="{% url 'predict' %}">{% include 'plan_fields.html' %}</form></section>{% endblock %}
