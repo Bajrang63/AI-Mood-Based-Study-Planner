@@ -353,5 +353,24 @@ def get_study_tips(mood: str, intensity: str) -> list:
 # -------------------------------------------------------
 # AUTO-TRAIN: Train model when this file is first imported
 # -------------------------------------------------------
-if not os.path.exists(MODEL_PATH):
-    train_model()
+# Training is explicit: python manage.py train_study_model
+
+
+
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def cached_model():
+    if not os.path.exists(MODEL_PATH): return None
+    return load_model()
+
+def recommend_intensity(mood, minutes, focus):
+    model = cached_model()
+    if model is not None:
+        prediction = model.predict(np.array([[MOOD_ENCODING[mood], max(1,min(8,minutes/60)), focus]]))[0]
+        label=INTENSITY_LABELS[prediction]
+        explanation='Suggested by a Decision Tree trained on synthetic examples; this is not a measured learning outcome.'
+    else:
+        label='Light' if mood in ('Tired','Sad','Stressed') or focus<=3 else 'Intense' if focus>=8 and mood in ('Happy','Energetic') else 'Moderate'
+        explanation='Suggested by transparent mood and focus rules. The optional synthetic-data model has not been trained.'
+    return label, explanation+' You can change the intensity to suit your needs.'

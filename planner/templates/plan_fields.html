@@ -1,0 +1,7 @@
+{% csrf_token %}{{ form.non_field_errors }}
+<div class="field"><label for="{{ form.title.id_for_label }}">PLAN NAME</label>{{ form.title }}{{ form.title.errors }}</div>
+<fieldset class="mood-field"><legend>HOW ARE YOU FEELING?</legend><div class="mood-grid">{% for radio in form.mood %}<label class="mood-option">{{ radio.tag }}<span class="mood-card">{{ radio.choice_label }}</span></label>{% endfor %}</div>{{ form.mood.errors }}</fieldset>
+<div class="form-grid"><div class="field"><label for="{{ form.minutes.id_for_label }}">AVAILABLE MINUTES</label>{{ form.minutes }}{{ form.minutes.errors }}</div><div class="field"><label for="{{ form.start.id_for_label }}">START TIME</label>{{ form.start }}{{ form.start.errors }}</div></div>
+<div class="field range-field"><label for="{{ form.focus.id_for_label }}">FOCUS LEVEL <output id="focusValue" for="id_focus">{{ form.focus.value|default:6 }} / 10</output></label>{{ form.focus }}{{ form.focus.errors }}<div class="range-labels"><span>A little distracted</span><span>Ready for deep work</span></div></div>
+<div class="field"><label for="{{ form.intensity.id_for_label }}">STUDY INTENSITY</label>{{ form.intensity }}{{ form.intensity.errors }}</div>
+<button class="button primary full" type="submit">✦ &nbsp; Create my study plan <span>→</span></button><p class="form-note">Your mood is a starting point. You're always in control.</p>

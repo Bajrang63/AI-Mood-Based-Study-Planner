@@ -1,3 +1,3 @@
 from django.contrib import admin
-
-# Register your models here.
+from .models import StudyHistory,Subject,Task,StudyPlan,StudyBlock
+admin.site.register([StudyHistory,Subject,Task,StudyPlan,StudyBlock])
